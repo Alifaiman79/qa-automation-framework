@@ -1,7 +1,10 @@
 import 'dotenv/config';
 import { defineConfig, devices } from '@playwright/test';
 
+const evidenceProject = process.env.EVIDENCE_PROJECT || 'UNASSIGNED';
+
 export default defineConfig({
+  metadata: { evidenceProject },
   testDir: './tests',
 
   fullyParallel: true,
@@ -15,6 +18,7 @@ export default defineConfig({
   reporter: [
     ['list'],
     ['html', { open: 'never' }],
+    ['./utils/evidenceReporter.ts'],
   ],
 
   timeout: 30_000,
@@ -27,21 +31,25 @@ export default defineConfig({
     baseURL: process.env.BASE_URL || 'https://playwright.dev',
 
     trace: 'on-first-retry',
-    screenshot: 'only-on-failure',
+    // This end-of-test screenshot is contextual evidence, not proof of every assertion.
+    screenshot: 'on',
     video: 'retain-on-failure',
   },
 
   projects: [
     {
       name: 'chromium',
+      metadata: { evidenceProject },
       use: { ...devices['Desktop Chrome'] },
     },
     {
       name: 'firefox',
+      metadata: { evidenceProject },
       use: { ...devices['Desktop Firefox'] },
     },
     {
       name: 'webkit',
+      metadata: { evidenceProject },
       use: { ...devices['Desktop Safari'] },
     },
   ],
