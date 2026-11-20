@@ -8,10 +8,28 @@ node_modules/
 /playwright/.auth/
 /test-evidence/
 
+# Temporary files and local caches
+*.log
+*.log.*
+*.tmp
+*.temp
+*.tsbuildinfo
+.cache/
+.npm/
+.eslintcache
+
 # Environment variables
 .env
 .env.*
 !.env.example
+
+# Local private keys and credentials
+*.pem
+*.key
+*.p12
+*.pfx
+/.aws/
+/.credentials/
 
 # Authentication sessions
 auth/*.json

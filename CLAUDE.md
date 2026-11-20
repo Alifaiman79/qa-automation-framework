@@ -335,9 +335,11 @@ Use Playwright's existing reporting configuration.
 
 Supported evidence:
 - HTML reports
-- Screenshots on failure
-- Videos on failure
-- Traces when configured
+- End-of-test screenshots (the current Playwright configuration captures screenshots for every test)
+- Videos retained on failure
+- Traces on the first retry
+- Per-attempt execution activity logs in JSON and text formats
+- Completion metadata and latest-only retention when `EVIDENCE_RETENTION_ENABLED=true`
 
 Rules:
 

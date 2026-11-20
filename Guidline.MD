@@ -117,8 +117,11 @@ Task:
     explicitly ask them to read it or paste the prompt above.
 -   Codegen is a starting point: clean selectors and add real
     assertions.
--   Screenshots/videos are retained on failure per current config;
-    traces on first retry **only if a retry occurs**, or use
-    `--trace on`.
+-   The current config captures an end-of-test screenshot for every test,
+    retains videos on failure, and captures traces on the first retry
+    **only if a retry occurs**, or use `--trace on`.
+-   The evidence reporter writes per-attempt JSON and text activity logs.
+    Latest-only evidence retention is controlled by
+    `EVIDENCE_RETENTION_ENABLED=true`; incomplete or legacy evidence is preserved.
 -   No real app tests or reusable login flow are configured yet:
     complete those per application.
