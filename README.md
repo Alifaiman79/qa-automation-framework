@@ -83,6 +83,19 @@ npx playwright show-report
 
 Playwright test results and reports are written to ignored local output directories.
 
+## GitHub Actions
+
+The CI workflow runs TypeScript validation and the tagged Chromium smoke test in `tests/demo/`. It installs Chromium on an Ubuntu runner and uploads the HTML report, Playwright test results, and execution evidence as artifacts for seven days, including when the test job fails. The initial `BASE_URL` points to the public TodoMVC demo.
+
+Run the public smoke test locally from PowerShell by setting `BASE_URL` explicitly:
+
+```powershell
+$env:BASE_URL = 'https://demo.playwright.dev/todomvc/'
+npx playwright test tests/demo/ --project=chromium --workers=1 --grep '@smoke'
+```
+
+In GitHub, open the completed workflow run and download its artifacts from the run summary. Manual runs can override the grep filter; test execution remains restricted to `tests/demo/`.
+
 ## Evidence and Execution Activity Logs
 
 The custom evidence reporter stores each execution under its project, browser, and test case ID. PASS and FAIL executions remain separate:
@@ -115,7 +128,7 @@ This repository contains reusable framework components, not an application-speci
 
 Chromium, Firefox, and WebKit projects are configured. A project being configured does not imply that its browser execution has been validated.
 
-Company-specific automation folders are excluded from Git by default. Their local contents are not described or published by this generic framework README.
+Local Git exclusions are not included in fresh clones or GitHub Actions checkouts. Only files committed to the repository are available there; add any required reusable files to the repository through the normal review process. Company-specific local files are not part of the tracked framework.
 
 ## Security and publishing
 
