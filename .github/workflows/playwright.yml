@@ -1,0 +1,85 @@
+name: Playwright CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      test_grep:
+        description: Playwright grep filter for tests/demo/
+        required: false
+        default: '@smoke'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  chromium-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      BASE_URL: https://demo.playwright.dev/todomvc/
+      TEST_GREP: ${{ inputs.test_grep || '@smoke' }}
+      TEST_ENV: demo
+      EVIDENCE_PROJECT: portfolio-demo
+      EVIDENCE_RETENTION_ENABLED: 'true'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate TypeScript
+        run: npx tsc --noEmit
+
+      - name: Validate BASE_URL
+        shell: bash
+        run: |
+          if [ -z "${BASE_URL:-}" ]; then
+            echo "::error::BASE_URL must be set for CI."
+            exit 1
+          fi
+
+      - name: Install Chromium and Linux dependencies
+        run: npx playwright install --with-deps chromium
+
+      - name: Run public Chromium smoke tests
+        run: npx playwright test tests/demo/ --project=chromium --workers=1 --grep "$TEST_GREP"
+
+      - name: Upload Playwright HTML report
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload Playwright test results
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: test-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload execution evidence
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: test-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-evidence/
+          if-no-files-found: ignore
+          retention-days: 7
