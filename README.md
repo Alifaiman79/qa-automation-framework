@@ -22,6 +22,8 @@ test-data/api/            Typed synthetic API request data
 tests/<project>/          Project-specific Playwright tests
 tests/api/                API tests using Playwright's request fixture
 tests/demo/               Public browser smoke tests
+tests/integration/        Local API and browser integration test
+playwright.integration.config.ts  Isolated integration test configuration
 tests/auth.setup.ts       Authentication setup placeholder (currently skipped)
 utils/                    Shared helpers and the evidence reporter
 auth/                     Reserved for local authentication state; never commit it
@@ -112,6 +114,24 @@ npx playwright test tests/api/ --project=api --grep '@api' --workers=1
 
 The API project does not require a browser installation when its tests use only the `request` fixture. DummyJSON simulates POST, PUT, PATCH, and DELETE responses; those writes are not persisted, so the tests validate response status and body rather than a later GET reflecting the write. GitHub Actions runs the API suite in a separate job from the Chromium UI smoke job, with separate report and evidence artifacts.
 
+## API and UI integration
+
+`INT_TC_001` creates a synthetic item through the local test API and verifies that the browser UI displays the same item. The disposable Node.js server uses only built-in modules; its API and UI share one in-memory store, and the UI reads items through `GET /api/items`. The item is deleted through the API during test cleanup.
+
+This fixture demonstrates the Playwright API-to-browser workflow. It is not a production-like application and does not validate a database, authentication, or external service behavior.
+
+Run the integration test locally from PowerShell:
+
+```powershell
+$env:INTEGRATION_PORT = '4179'
+$env:EVIDENCE_PROJECT = 'portfolio-demo'
+npx playwright test -c playwright.integration.config.ts --project=chromium --workers=1 --retries=0
+```
+
+Playwright starts the local server before the run and stops it afterward. The default port is `4179`; set `INTEGRATION_PORT` to another available port if needed. The dedicated configuration selects only `tests/integration/` and does not use `BASE_URL` or `API_BASE_URL`.
+
+GitHub Actions runs this test in its own job, starts the same local server through Playwright, installs Chromium, and uploads integration-specific HTML report, test-results, and evidence artifacts for seven days. The job uses no external API or credentials.
+
 ## Evidence and Execution Activity Logs
 
 The custom evidence reporter stores each execution under its project, browser, and test case ID. PASS and FAIL executions remain separate:
@@ -130,7 +150,7 @@ Each execution directory contains attempt directories such as `ATTEMPT_0/`. An a
 - `evidence.png` or `failure.png`, plus verification screenshots attached by a test
 - Failure details, traces, or videos when produced by the run
 
-`execution-complete.json` marks a completed logical execution under its final status. Activity logs record attempt status separately from the final logical test status. Retry attempts share an execution ID; if retry statuses differ, their attempt directories can be under both PASS and FAIL roots.
+When `EVIDENCE_RETENTION_ENABLED=true`, successful reporter finalization writes `execution-complete.json` under the logical execution's final status. With retention disabled, valid attempt evidence, screenshots, and activity logs can still be produced without that marker. Activity logs record attempt status separately from the final logical test status. Retry attempts share an execution ID; if retry statuses differ, their attempt directories can be under both PASS and FAIL roots.
 
 ### Latest-only evidence retention
 

@@ -41,24 +41,25 @@ export default defineConfig({
     {
       name: 'chromium',
       metadata: { evidenceProject },
-      testIgnore: '**/api/**',
+      testIgnore: ['**/api/**', '**/integration/**'],
       use: { ...devices['Desktop Chrome'] },
     },
     {
       name: 'firefox',
       metadata: { evidenceProject },
-      testIgnore: '**/api/**',
+      testIgnore: ['**/api/**', '**/integration/**'],
       use: { ...devices['Desktop Firefox'] },
     },
     {
       name: 'webkit',
       metadata: { evidenceProject },
-      testIgnore: '**/api/**',
+      testIgnore: ['**/api/**', '**/integration/**'],
       use: { ...devices['Desktop Safari'] },
     },
     {
       name: 'api',
       testDir: './tests/api',
+      testIgnore: '**/integration/**',
       metadata: { evidenceProject },
       use: { baseURL: apiBaseURL },
     },
