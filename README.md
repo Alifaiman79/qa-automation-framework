@@ -18,7 +18,10 @@ Dependencies are listed in `package.json` and pinned by `package-lock.json`.
 fixtures/                 Shared test fixtures and verification screenshot helper
 pages/<project>/          Project-specific Page Objects
 test-data/                Reusable, non-sensitive test data
+test-data/api/            Typed synthetic API request data
 tests/<project>/          Project-specific Playwright tests
+tests/api/                API tests using Playwright's request fixture
+tests/demo/               Public browser smoke tests
 tests/auth.setup.ts       Authentication setup placeholder (currently skipped)
 utils/                    Shared helpers and the evidence reporter
 auth/                     Reserved for local authentication state; never commit it
@@ -95,6 +98,19 @@ npx playwright test tests/demo/ --project=chromium --workers=1 --grep '@smoke'
 ```
 
 In GitHub, open the completed workflow run and download its artifacts from the run summary. Manual runs can override the grep filter; test execution remains restricted to `tests/demo/`.
+
+## API testing
+
+API tests use Playwright's built-in `request` fixture through the shared test export. `API_BASE_URL` configures the API project separately from the browser UI `BASE_URL`; the safe public default is `https://dummyjson.com`.
+
+Run the API tests locally from PowerShell:
+
+```powershell
+$env:API_BASE_URL = 'https://dummyjson.com'
+npx playwright test tests/api/ --project=api --grep '@api' --workers=1
+```
+
+The API project does not require a browser installation when its tests use only the `request` fixture. DummyJSON simulates POST, PUT, PATCH, and DELETE responses; those writes are not persisted, so the tests validate response status and body rather than a later GET reflecting the write. GitHub Actions runs the API suite in a separate job from the Chromium UI smoke job, with separate report and evidence artifacts.
 
 ## Evidence and Execution Activity Logs
 

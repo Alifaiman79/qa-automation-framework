@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { defineConfig, devices } from '@playwright/test';
 
 const evidenceProject = process.env.EVIDENCE_PROJECT || 'UNASSIGNED';
+const apiBaseURL = process.env.API_BASE_URL || 'https://dummyjson.com';
 
 export default defineConfig({
   metadata: { evidenceProject },
@@ -40,17 +41,26 @@ export default defineConfig({
     {
       name: 'chromium',
       metadata: { evidenceProject },
+      testIgnore: '**/api/**',
       use: { ...devices['Desktop Chrome'] },
     },
     {
       name: 'firefox',
       metadata: { evidenceProject },
+      testIgnore: '**/api/**',
       use: { ...devices['Desktop Firefox'] },
     },
     {
       name: 'webkit',
       metadata: { evidenceProject },
+      testIgnore: '**/api/**',
       use: { ...devices['Desktop Safari'] },
+    },
+    {
+      name: 'api',
+      testDir: './tests/api',
+      metadata: { evidenceProject },
+      use: { baseURL: apiBaseURL },
     },
   ],
 });
