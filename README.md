@@ -44,18 +44,19 @@ npm ci
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
-Edit the local `.env` with values for the approved test environment. `.env` is ignored by Git; never commit credentials, tokens, cookies, or real authentication state.
+The default `playwright.config.ts` imports `dotenv/config`, so its UI and API projects load the local `.env`. Edit that file only for an approved test environment. `.env` is ignored by Git; never commit credentials, tokens, cookies, or real authentication state.
 
 The checked-in `.env.example` contains placeholders:
 
 ```dotenv
 BASE_URL=https://your-test-environment.example
+API_BASE_URL=https://dummyjson.com
 TEST_ENV=SIT
 EVIDENCE_PROJECT=UNASSIGNED
 EVIDENCE_RETENTION_ENABLED=false
 ```
 
-Set `BASE_URL`, `TEST_ENV`, and `EVIDENCE_PROJECT` to match the application and environment being tested. Keep the actual URL in local `.env` rather than in source or public documentation. Retention is opt-in; set `EVIDENCE_RETENTION_ENABLED=true` only when automatic cleanup is intended.
+For default-config runs, set `BASE_URL`, `TEST_ENV`, and `EVIDENCE_PROJECT` to match the application and environment; `API_BASE_URL` controls the separate API project. The dedicated integration config does not load dotenv automatically. It reads process environment variables, including `INTEGRATION_PORT` (default `4179`) and `EVIDENCE_PROJECT` (default `UNASSIGNED`), and uses a loopback URL instead of either base URL. Keep private URLs in local `.env`, not source or public documentation. Retention is opt-in; set `EVIDENCE_RETENTION_ENABLED=true` only when automatic cleanup is intended.
 
 ## Validate and execute tests
 
@@ -65,7 +66,7 @@ Type-check the project:
 npx tsc --noEmit
 ```
 
-Run the test suite:
+Run the default configuration (browser and API projects; the dedicated integration suite is excluded):
 
 ```powershell
 npx playwright test
@@ -78,7 +79,7 @@ npx playwright test --project=chromium
 npx playwright test tests/<project>/<feature>.spec.ts --project=chromium --workers=1
 ```
 
-Add `--headed` to display the browser. Configured browser projects are `chromium`, `firefox`, and `webkit`.
+Add `--headed` to display the browser. The default configuration has `chromium`, `firefox`, `webkit`, and `api` projects. Use the dedicated integration config shown below for the local API/UI suite.
 
 View the HTML report after a run:
 
@@ -90,7 +91,7 @@ Playwright test results and reports are written to ignored local output director
 
 ## GitHub Actions
 
-The CI workflow runs TypeScript validation and the tagged Chromium smoke test in `tests/demo/`. It installs Chromium on an Ubuntu runner and uploads the HTML report, Playwright test results, and execution evidence as artifacts for seven days, including when the test job fails. The initial `BASE_URL` points to the public TodoMVC demo.
+The CI workflow has three independent jobs: tagged Chromium smoke coverage in `tests/demo/`, DummyJSON API checks in `tests/api/`, and the local Chromium API/UI integration test in `tests/integration/`. Each validates TypeScript and uploads its own HTML report, Playwright results, and evidence for seven days, including on test failure. Browser jobs install Chromium; the API job uses Playwright's request fixture. The smoke job uses the public TodoMVC demo.
 
 Run the public smoke test locally from PowerShell by setting `BASE_URL` explicitly:
 
@@ -99,7 +100,7 @@ $env:BASE_URL = 'https://demo.playwright.dev/todomvc/'
 npx playwright test tests/demo/ --project=chromium --workers=1 --grep '@smoke'
 ```
 
-In GitHub, open the completed workflow run and download its artifacts from the run summary. Manual runs can override the grep filter; test execution remains restricted to `tests/demo/`.
+In GitHub, open the completed workflow run and download its artifacts from the run summary. Manual runs can override the smoke job's grep filter; that job remains restricted to `tests/demo/`.
 
 ## API testing
 
@@ -116,7 +117,7 @@ The API project does not require a browser installation when its tests use only 
 
 ## API and UI integration
 
-`INT_TC_001` creates a synthetic item through the local test API and verifies that the browser UI displays the same item. The disposable Node.js server uses only built-in modules; its API and UI share one in-memory store, and the UI reads items through `GET /api/items`. The item is deleted through the API during test cleanup.
+`INT_TC_001` creates a uniquely named synthetic item through the local test API and verifies the browser UI contains exactly that item. The disposable Node.js server uses only built-in modules; its API and UI share one in-memory store, and the UI reads items through `GET /api/items`. The test validates the returned UUID and deletes that item through the API in `finally`; if test and cleanup both fail, both errors are retained.
 
 This fixture demonstrates the Playwright API-to-browser workflow. It is not a production-like application and does not validate a database, authentication, or external service behavior.
 
@@ -128,7 +129,7 @@ $env:EVIDENCE_PROJECT = 'portfolio-demo'
 npx playwright test -c playwright.integration.config.ts --project=chromium --workers=1 --retries=0
 ```
 
-Playwright starts the local server before the run and stops it afterward. The default port is `4179`; set `INTEGRATION_PORT` to another available port if needed. The dedicated configuration selects only `tests/integration/` and does not use `BASE_URL` or `API_BASE_URL`.
+Playwright starts the local server before the run and stops it afterward. The default port is `4179`; set `INTEGRATION_PORT` to another available port if needed. The dedicated configuration selects only `tests/integration/` and does not use `BASE_URL` or `API_BASE_URL`. Set integration environment variables in PowerShell as above or in CI; values in `.env` are not automatically loaded by this config.
 
 GitHub Actions runs this test in its own job, starts the same local server through Playwright, installs Chromium, and uploads integration-specific HTML report, test-results, and evidence artifacts for seven days. The job uses no external API or credentials.
 
@@ -152,6 +153,8 @@ Each execution directory contains attempt directories such as `ATTEMPT_0/`. An a
 
 When `EVIDENCE_RETENTION_ENABLED=true`, successful reporter finalization writes `execution-complete.json` under the logical execution's final status. With retention disabled, valid attempt evidence, screenshots, and activity logs can still be produced without that marker. Activity logs record attempt status separately from the final logical test status. Retry attempts share an execution ID; if retry statuses differ, their attempt directories can be under both PASS and FAIL roots.
 
+Automatic end-of-test screenshots show context; they do not prove each assertion. Tests can attach screenshots at meaningful verification points. The configured `on-first-retry` trace is absent for a successful test without retries. Evidence uses `UNASSIGNED` when `evidenceProject` metadata is not supplied.
+
 ### Latest-only evidence retention
 
 Retention is enabled only when `EVIDENCE_RETENTION_ENABLED=true`. After evidence and completion metadata are written successfully, the reporter uses an exclusive lock and keeps the latest completed execution for each project/browser/test-case combination across PASS and FAIL, including all of that execution's retries. Cleanup fails closed: interrupted runs, incomplete evidence, ambiguous metadata, symlinks, or unavailable locks are preserved and reported. Legacy evidence without valid completion metadata is preserved.
@@ -165,6 +168,12 @@ This repository contains reusable framework components, not an application-speci
 Chromium, Firefox, and WebKit projects are configured. A project being configured does not imply that its browser execution has been validated.
 
 Local Git exclusions are not included in fresh clones or GitHub Actions checkouts. Only files committed to the repository are available there; add any required reusable files to the repository through the normal review process. Company-specific local files are not part of the tracked framework.
+
+## Contribution workflow and phase status
+
+For public framework changes, review the diff and sensitive-data scope, run the relevant static checks and targeted tests, then create a feature branch. Stage only approved files and commit after review. Create a Pull Request when approved, verify all relevant CI jobs, and merge only after approval. Confirm post-merge CI and synchronize local `main`. Keep private application-specific tests and evidence out of this public workflow.
+
+Completed: Phase 1 (CI Pipeline v1), Phase 2A (API automation), and Phase 2B (local API/UI integration). Phases 3–7 are planned only; their scope and acceptance criteria are not implemented or defined here.
 
 ## Security and publishing
 
