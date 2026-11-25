@@ -4,15 +4,18 @@
 > any project. Do not reinstall tools, recreate shared components, or
 > modify unrelated tests.
 
+This guide primarily covers application-specific UI cases. First decide whether the requirement needs a UI test, API test, or genuine API/UI integration test. The public demo, DummyJSON API, and local integration examples are documented in [README.md](README.md); they are not private application coverage.
+
 ## 1. Start a project (once per application)
 
 1.  Open the existing `QA Automation` folder in VS Code.
 
-2.  Set `.env` to the **approved test environment**:
+2.  For the default Playwright configuration, set `.env` to the **approved test environment**; it loads dotenv. Use placeholders in shared instructions and AI prompts; never paste private SIT/UAT URLs:
 
     ``` dotenv
-    BASE_URL=https://your-sit-or-uat-url
+    BASE_URL=https://your-approved-test-environment.example
     TEST_ENV=SIT
+    EVIDENCE_PROJECT=UNASSIGNED
     ```
 
 3.  Create project-specific folders **only when needed**:
@@ -34,19 +37,17 @@
 1.  Copy **Test Case ID, title, preconditions, steps, test data,
     expected results**.
 
-2.  Give the AI the prompt below. Let it inspect `CLAUDE.md` (if
-    present) and actual framework files.
+2.  Review acceptance criteria and design positive, negative, and boundary scenarios where relevant. Give the AI the prompt below. Let it inspect `CLAUDE.md` and actual framework files.
 
-3.  Review generated `.spec.ts`: correct steps, stable locators,
-    meaningful assertions, no invented requirements, no hardcoded
-    secrets.
+3.  Review generated `.spec.ts`: correct steps, stable semantic locators,
+    exact assertions when exact output is required, no invented requirements,
+    no hardcoded secrets. Use Codegen and Page Objects only when they help UI work.
+    For API checks, validate status and response fields. For stateful integration,
+    use unique synthetic data and clean up created records in `finally`, preserving
+    both the original failure and any cleanup error.
 
-4.  Verify and execute **only the targeted test**:
-
-    ``` powershell
-    npx tsc --noEmit
-    npx playwright test tests/<project>/<feature>.spec.ts --project=chromium
-    ```
+4.  Verify and execute **only the authorized test**, using the correct project
+    or dedicated configuration. See [README.md](README.md) for commands.
 
 5.  If failed, check whether it is an **application defect**, locator
     issue, test-data issue, auth issue, or environment issue. Never
@@ -65,7 +66,7 @@ Page Objects (pages/), fixtures/, utils/, and test-data/. Do not reinstall
 dependencies, duplicate code, overwrite tests, or change unrelated files.
 
 Project: [NAME]
-Environment / BASE_URL: [SIT/UAT URL]
+Environment / BASE_URL: [APPROVED ENVIRONMENT NAME OR PLACEHOLDER; NO PRIVATE URL]
 Test Case ID & Title: [ID + TITLE]
 Preconditions / Role: [DETAILS]
 Steps: [PASTE]
@@ -74,9 +75,11 @@ Expected Results: [PASTE]
 
 Task:
 - Implement a maintainable Playwright TypeScript .spec.ts test under tests/[project]/.
-- Add only necessary project-specific Page Object methods/fixtures.
-- Use reliable locators, auto-waiting, independent test setup, and assertions
-  covering each expected result.
+- Add project-specific Page Object methods only when UI interactions need reuse; add fixtures only when necessary.
+- Use reliable locators, auto-waiting, independent test setup, and exact assertions
+  where required; cover positive, negative, and boundary criteria when applicable.
+- For API work, check status and response fields. For stateful work, use unique
+  synthetic data and cleanup in finally while preserving original failures.
 - Preserve the Jira/Zephyr ID and existing framework conventions.
 - Do not invent application behavior, locators, credentials, or expected results.
 - Ask for missing essentials and clearly state assumptions.
@@ -85,40 +88,30 @@ Task:
 - Never claim a test passed without real execution evidence.
 ```
 
-## 4. Useful commands
+## 4. Execution reference
 
-  ----------------------------------------------------------------------------------------------------------------
-  Task                                Command
-  ----------------------------------- ----------------------------------------------------------------------------
-  Type-check                          `npx tsc --noEmit`
-
-  Run one file                        `npx playwright test tests/<project>/<feature>.spec.ts`
-
-  Chromium only                       `npx playwright test tests/<project>/<feature>.spec.ts --project=chromium`
-
-  Visual debugging                    `npx playwright test --ui`
-
-  Step debugging                      `npx playwright test --debug`
-
-  Record browser actions              `npx playwright codegen <url>`
-
-  HTML report                         `npx playwright show-report`
-
-  Capture trace for a run             `npx playwright test tests/<project>/<feature>.spec.ts --trace on`
-  ----------------------------------------------------------------------------------------------------------------
+Use the UI, API, or integration commands in [README.md](README.md). The local integration suite requires its dedicated Playwright config. Confirm the environment and authorization before running any test.
 
 ## 5. Rules to remember
 
 -   **One shared framework; project-specific tests, pages, data, and
     authentication.**
--   `.env` controls the active environment; **double-check before every
-    run**.
+-   The default Playwright config loads `.env` for UI and API runs. The dedicated
+    integration config runs a local loopback fixture and does not load dotenv; it reads process environment variables
+    such as `INTEGRATION_PORT` (default `4179`) and `EVIDENCE_PROJECT` (default
+    `UNASSIGNED`). Set those explicitly in PowerShell or CI. Confirm the active
+    environment before every run.
 -   `CLAUDE.md` provides project guidance to Claude; for other AI tools,
     explicitly ask them to read it or paste the prompt above.
--   Codegen is a starting point: clean selectors and add real
+-   Codegen is an optional UI starting point: clean selectors and add real
     assertions.
 -   The current config captures an end-of-test screenshot for every test,
-    retains videos on failure, and captures traces on the first retry
+    as contextual evidence rather than proof of each assertion. Attach
+    verification-point screenshots when they add useful proof. Evidence uses
+    `UNASSIGNED` if no project metadata is supplied.
+    `execution-complete.json` requires enabled retention and successful reporter
+    finalization; disabled retention can still leave complete attempt evidence.
+    The config retains videos on failure and captures traces on the first retry
     **only if a retry occurs**, or use `--trace on`.
 -   The evidence reporter writes per-attempt JSON and text activity logs.
     Latest-only evidence retention is controlled by
