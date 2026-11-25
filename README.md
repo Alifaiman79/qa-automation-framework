@@ -19,10 +19,11 @@ fixtures/                 Shared test fixtures and verification screenshot helpe
 pages/<project>/          Project-specific Page Objects
 test-data/                Reusable, non-sensitive test data
 test-data/api/            Typed synthetic API request data
+test-data/integration/    Typed local integration case datasets
 tests/<project>/          Project-specific Playwright tests
 tests/api/                API tests using Playwright's request fixture
 tests/demo/               Public browser smoke tests
-tests/integration/        Local API and browser integration test
+tests/integration/        Local API and browser integration tests
 playwright.integration.config.ts  Isolated integration test configuration
 tests/auth.setup.ts       Authentication setup placeholder (currently skipped)
 utils/                    Shared helpers and the evidence reporter
@@ -91,7 +92,7 @@ Playwright test results and reports are written to ignored local output director
 
 ## GitHub Actions
 
-The CI workflow has three independent jobs: tagged Chromium smoke coverage in `tests/demo/`, DummyJSON API checks in `tests/api/`, and the local Chromium API/UI integration test in `tests/integration/`. Each validates TypeScript and uploads its own HTML report, Playwright results, and evidence for seven days, including on test failure. Browser jobs install Chromium; the API job uses Playwright's request fixture. The smoke job uses the public TodoMVC demo.
+The CI workflow has three independent jobs: tagged Chromium smoke coverage in `tests/demo/`, DummyJSON API checks in `tests/api/`, and local Chromium API/UI integration tests in `tests/integration/`. Each validates TypeScript and uploads its own HTML report, Playwright results, and evidence for seven days, including on test failure. Browser jobs install Chromium; the API job uses Playwright's request fixture. The smoke job uses the public TodoMVC demo.
 
 Run the public smoke test locally from PowerShell by setting `BASE_URL` explicitly:
 
@@ -121,7 +122,7 @@ The API project does not require a browser installation when its tests use only 
 
 This fixture demonstrates the Playwright API-to-browser workflow. It is not a production-like application and does not validate a database, authentication, or external service behavior.
 
-Run the integration test locally from PowerShell:
+Run the integration suite locally from PowerShell:
 
 ```powershell
 $env:INTEGRATION_PORT = '4179'
@@ -131,7 +132,58 @@ npx playwright test -c playwright.integration.config.ts --project=chromium --wor
 
 Playwright starts the local server before the run and stops it afterward. The default port is `4179`; set `INTEGRATION_PORT` to another available port if needed. The dedicated configuration selects only `tests/integration/` and does not use `BASE_URL` or `API_BASE_URL`. Set integration environment variables in PowerShell as above or in CI; values in `.env` are not automatically loaded by this config.
 
-GitHub Actions runs this test in its own job, starts the same local server through Playwright, installs Chromium, and uploads integration-specific HTML report, test-results, and evidence artifacts for seven days. The job uses no external API or credentials.
+GitHub Actions runs the integration suite in its own job, starts the same local server through Playwright, installs Chromium, and uploads integration-specific HTML report, test-results, and evidence artifacts for seven days. The job uses no external API or credentials. Phase 3 CI has not yet been verified.
+
+## Data-driven integration testing
+
+`test-data/integration/itemsCases.ts` defines typed, readonly cases. `tests/integration/items.data.spec.ts` uses native Playwright parameterization to register one independent test per case at file scope. Each has a stable `DATA_TC_*` ID, its own result and evidence, and no test-order dependency. Accepted cases create an item through the local API, validate its UUID and exact name, then locate that UUID in the UI and assert its exact text. When a record is created, its test deletes only that UUID in `finally` and retains both the original and cleanup failures. Rejected cases assert HTTP `400` and the exact validation error. The existing integration CI command selects this spec without workflow changes.
+
+Normal and 200-character names are generated inside each test; the one-character boundary case is isolated by its returned UUID. Evidence follows the project, browser, case ID, execution, and attempt layout described below.
+
+| Case | Input | Expected HTTP status |
+| --- | --- | ---: |
+| `DATA_TC_001` | Unique synthetic name | 201 |
+| `DATA_TC_002` | Exactly 200 ASCII characters | 201 |
+| `DATA_TC_003` | One character | 201 |
+| `DATA_TC_004` | Empty string | 400 |
+| `DATA_TC_005` | Whitespace only | 400 |
+| `DATA_TC_006` | Exactly 201 ASCII characters | 400 |
+| `DATA_TC_007` | Numeric name | 400 |
+
+In PowerShell, set the evidence project before running any command below. Retention is disabled here so prior executions remain available:
+
+```powershell
+$env:EVIDENCE_PROJECT = 'portfolio-demo'
+$env:EVIDENCE_RETENTION_ENABLED = 'false'
+```
+
+Run all seven data-driven cases:
+
+```powershell
+npx --no-install playwright test -c playwright.integration.config.ts tests/integration/items.data.spec.ts --project=chromium --workers=1 --retries=0
+```
+
+Run one case independently by its ID:
+
+```powershell
+npx --no-install playwright test -c playwright.integration.config.ts tests/integration/items.data.spec.ts --project=chromium --grep 'DATA_TC_001' --workers=1 --retries=0
+```
+
+Run only the data-driven spec with two workers:
+
+```powershell
+npx --no-install playwright test -c playwright.integration.config.ts tests/integration/items.data.spec.ts --project=chromium --fully-parallel --workers=2 --retries=0
+```
+
+Run the full integration regression with one worker:
+
+```powershell
+npx --no-install playwright test -c playwright.integration.config.ts --project=chromium --workers=1 --retries=0
+```
+
+Local validation passed: 7/7 targeted and independent data-driven cases, 7/7 two-worker cases (user-reported), and 8/8 full integration cases; the API and UI smoke regressions passed 6/6 and 1/1. The seven cases produced separate evidence, including verification screenshots for the three UI cases. API-only rejection cases need no browser screenshot. Parallel validation applies to the data-driven spec only; the full integration suite has not been validated with `--fully-parallel`.
+
+The fixture uses synthetic data and disposable in-memory state, not production systems. Positive-case cleanup requires a valid returned UUID. If a future server creates an item but returns a non-201 success status, the status assertion may fail before that UUID is captured; the current fixture always returns `201` for successful creation.
 
 ## Evidence and Execution Activity Logs
 
@@ -173,7 +225,7 @@ Local Git exclusions are not included in fresh clones or GitHub Actions checkout
 
 For public framework changes, review the diff and sensitive-data scope, run the relevant static checks and targeted tests, then create a feature branch. Stage only approved files and commit after review. Create a Pull Request when approved, verify all relevant CI jobs, and merge only after approval. Confirm post-merge CI and synchronize local `main`. Keep private application-specific tests and evidence out of this public workflow.
 
-Completed: Phase 1 (CI Pipeline v1), Phase 2A (API automation), and Phase 2B (local API/UI integration). Phases 3–7 are planned only; their scope and acceptance criteria are not implemented or defined here.
+Completed: Phase 1 (CI Pipeline v1), Phase 2A (API automation), and Phase 2B (local API/UI integration). Phase 3 (data-driven testing) is implemented and locally validated; its Pull Request, CI, and merge verification are pending. Phases 4–7 remain planned only.
 
 ## Security and publishing
 
