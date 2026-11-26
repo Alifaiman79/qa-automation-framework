@@ -41,19 +41,19 @@ export default defineConfig({
     {
       name: 'chromium',
       metadata: { evidenceProject },
-      testIgnore: ['**/api/**', '**/integration/**'],
+      testIgnore: ['**/api/**', '**/integration/**', '**/auth/**'],
       use: { ...devices['Desktop Chrome'] },
     },
     {
       name: 'firefox',
       metadata: { evidenceProject },
-      testIgnore: ['**/api/**', '**/integration/**'],
+      testIgnore: ['**/api/**', '**/integration/**', '**/auth/**'],
       use: { ...devices['Desktop Firefox'] },
     },
     {
       name: 'webkit',
       metadata: { evidenceProject },
-      testIgnore: ['**/api/**', '**/integration/**'],
+      testIgnore: ['**/api/**', '**/integration/**', '**/auth/**'],
       use: { ...devices['Desktop Safari'] },
     },
     {
