@@ -12,6 +12,7 @@
   },
   "include": [
     "playwright.config.ts",
+    "playwright.auth.config.ts",
     "tests/**/*.ts",
     "pages/**/*.ts",
     "fixtures/**/*.ts",

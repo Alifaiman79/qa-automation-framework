@@ -20,11 +20,14 @@ pages/<project>/          Project-specific Page Objects
 test-data/                Reusable, non-sensitive test data
 test-data/api/            Typed synthetic API request data
 test-data/integration/    Typed local integration case datasets
+test-data/auth/           Synthetic authentication case metadata
 tests/<project>/          Project-specific Playwright tests
 tests/api/                API tests using Playwright's request fixture
 tests/demo/               Public browser smoke tests
 tests/integration/        Local API and browser integration tests
+tests/auth/               Local authentication and RBAC tests and fixture
 playwright.integration.config.ts  Isolated integration test configuration
+playwright.auth.config.ts         Isolated authentication test configuration
 tests/auth.setup.ts       Authentication setup placeholder (currently skipped)
 utils/                    Shared helpers and the evidence reporter
 auth/                     Reserved for local authentication state; never commit it
@@ -57,7 +60,7 @@ EVIDENCE_PROJECT=UNASSIGNED
 EVIDENCE_RETENTION_ENABLED=false
 ```
 
-For default-config runs, set `BASE_URL`, `TEST_ENV`, and `EVIDENCE_PROJECT` to match the application and environment; `API_BASE_URL` controls the separate API project. The dedicated integration config does not load dotenv automatically. It reads process environment variables, including `INTEGRATION_PORT` (default `4179`) and `EVIDENCE_PROJECT` (default `UNASSIGNED`), and uses a loopback URL instead of either base URL. Keep private URLs in local `.env`, not source or public documentation. Retention is opt-in; set `EVIDENCE_RETENTION_ENABLED=true` only when automatic cleanup is intended.
+For default-config runs, set `BASE_URL`, `TEST_ENV`, and `EVIDENCE_PROJECT` to match the application and environment; `API_BASE_URL` controls the separate API project. The dedicated integration and authentication configs do not load dotenv automatically. They use process environment variables and loopback URLs rather than either default base URL. The integration config uses `INTEGRATION_PORT` (default `4179`); the auth config uses `AUTH_PORT` (default `4180`) and requires distinct synthetic `AUTH_ADMIN_PASSWORD` and `AUTH_STANDARD_PASSWORD` values. Both use `EVIDENCE_PROJECT` (default `UNASSIGNED`). Keep private URLs in local `.env`, not source or public documentation. Retention is opt-in; set `EVIDENCE_RETENTION_ENABLED=true` only when automatic cleanup is intended.
 
 ## Validate and execute tests
 
@@ -67,7 +70,7 @@ Type-check the project:
 npx tsc --noEmit
 ```
 
-Run the default configuration (browser and API projects; the dedicated integration suite is excluded):
+Run the default configuration (browser and API projects; the dedicated integration and authentication suites are excluded):
 
 ```powershell
 npx playwright test
@@ -80,7 +83,7 @@ npx playwright test --project=chromium
 npx playwright test tests/<project>/<feature>.spec.ts --project=chromium --workers=1
 ```
 
-Add `--headed` to display the browser. The default configuration has `chromium`, `firefox`, `webkit`, and `api` projects. Use the dedicated integration config shown below for the local API/UI suite.
+Add `--headed` to display the browser. The default configuration has `chromium`, `firefox`, `webkit`, and `api` projects. Use the dedicated configurations below for the local integration and authentication suites.
 
 View the HTML report after a run:
 
@@ -92,7 +95,7 @@ Playwright test results and reports are written to ignored local output director
 
 ## GitHub Actions
 
-The CI workflow has three independent jobs: tagged Chromium smoke coverage in `tests/demo/`, DummyJSON API checks in `tests/api/`, and local Chromium API/UI integration tests in `tests/integration/`. Each validates TypeScript and uploads its own HTML report, Playwright results, and evidence for seven days, including on test failure. Browser jobs install Chromium; the API job uses Playwright's request fixture. The smoke job uses the public TodoMVC demo.
+The CI workflow defines four independent jobs covering 24 unique tests: one tagged Chromium UI smoke test, six DummyJSON API tests, eight local API/UI integration tests, and nine local authentication and RBAC tests. Each job validates TypeScript. The first three jobs upload separate reports, results, and evidence for seven days; the authentication job uploads no artifacts while its publication privacy review remains incomplete. Browser jobs install Chromium; the API job uses Playwright's request fixture. The smoke job uses the public TodoMVC demo. The new authentication job has not yet run in a pull request or on `main`.
 
 Run the public smoke test locally from PowerShell by setting `BASE_URL` explicitly:
 
@@ -132,7 +135,7 @@ npx playwright test -c playwright.integration.config.ts --project=chromium --wor
 
 Playwright starts the local server before the run and stops it afterward. The default port is `4179`; set `INTEGRATION_PORT` to another available port if needed. The dedicated configuration selects only `tests/integration/` and does not use `BASE_URL` or `API_BASE_URL`. Set integration environment variables in PowerShell as above or in CI; values in `.env` are not automatically loaded by this config.
 
-GitHub Actions runs the integration suite in its own job, starts the same local server through Playwright, installs Chromium, and uploads integration-specific HTML report, test-results, and evidence artifacts for seven days. The job uses no external API or credentials. Phase 3 CI has not yet been verified.
+GitHub Actions runs the integration suite in its own job, starts the same local server through Playwright, installs Chromium, and uploads integration-specific HTML report, test-results, and evidence artifacts for seven days. The job uses no external API or credentials. Phase 3 CI and merge verification are complete.
 
 ## Data-driven integration testing
 
@@ -185,6 +188,57 @@ Local validation passed: 7/7 targeted and independent data-driven cases, 7/7 two
 
 The fixture uses synthetic data and disposable in-memory state, not production systems. Positive-case cleanup requires a valid returned UUID. If a future server creates an item but returns a non-201 success status, the status assertion may fail before that UUID is captured; the current fixture always returns `201` for successful creation.
 
+## Authentication and RBAC testing
+
+`tests/auth/support/auth-app.cjs` is a disposable loopback-only HTTP fixture with synthetic admin and standard accounts, in-memory sessions, and server-enforced access decisions. `test-data/auth/authCases.ts` holds typed case metadata; `tests/auth/auth-rbac.spec.ts` registers nine independent Playwright tests. `playwright.auth.config.ts` selects only this suite in Chromium, starts and stops the local server, defaults to one worker and zero retries, and disables automatic traces, videos, and screenshots. It does not load `.env` or use a public application.
+
+| Case | Scenario |
+| --- | --- |
+| `AUTH_TC_001` | Admin UI login and exact dashboard/API identity |
+| `AUTH_TC_002` | Standard-user UI login and exact dashboard/API identity |
+| `AUTH_TC_003` | Invalid credentials rejected without a session |
+| `AUTH_TC_004` | Guest denied direct UI and API access |
+| `AUTH_TC_005` | Logout invalidates the issued server session while another session remains valid |
+| `AUTH_TC_006` | In-memory session reuse and separate guest isolation |
+| `RBAC_TC_001` | Standard user denied direct admin UI and API access |
+| `RBAC_TC_002` | Admin allowed direct admin UI and API access |
+| `RBAC_TC_003` | Admin and standard sessions retain distinct roles; logout affects only one |
+
+Protected pages and API routes return `401` for guests and `403` for an authenticated standard user requesting the admin resource. The logout test reuses pre-logout storage state in memory to confirm server-side invalidation; no storage-state file is created. Each test cleans up its own sessions and contexts and retains both test and cleanup failures when necessary.
+
+In PowerShell, generate temporary synthetic credentials in the current session without displaying them. Use no real or company credentials:
+
+```powershell
+$env:AUTH_ADMIN_PASSWORD = [guid]::NewGuid().ToString('N')
+do {
+  $env:AUTH_STANDARD_PASSWORD = [guid]::NewGuid().ToString('N')
+} while ($env:AUTH_STANDARD_PASSWORD -eq $env:AUTH_ADMIN_PASSWORD)
+$env:AUTH_PORT = '4180'
+$env:EVIDENCE_PROJECT = 'portfolio-demo'
+$env:EVIDENCE_RETENTION_ENABLED = 'false'
+```
+
+Run all nine cases, one case independently, or the auth spec with two workers:
+
+```powershell
+npx --no-install playwright test -c playwright.auth.config.ts --project=chromium --workers=1 --retries=0
+npx --no-install playwright test -c playwright.auth.config.ts --project=chromium --grep 'AUTH_TC_001' --workers=1 --retries=0
+npx --no-install playwright test -c playwright.auth.config.ts --project=chromium --fully-parallel --workers=2 --retries=0
+```
+
+Replace `AUTH_TC_001` in the individual command with any other listed ID to run that case alone. The two-worker command applies only to the auth suite.
+
+Remove the temporary credential variables after testing:
+
+```powershell
+Remove-Item Env:AUTH_ADMIN_PASSWORD -ErrorAction SilentlyContinue
+Remove-Item Env:AUTH_STANDARD_PASSWORD -ErrorAction SilentlyContinue
+```
+
+Local validation passed: 9/9 sequential, 9/9 independently, and 9/9 with two workers; existing UI, API, and integration regression passed 1/1, 6/6, and 8/8. The evidence reporter retains separate PASS/FAIL attempts using the case annotations, with manually captured verification screenshots on safe post-login or access-denied pages. The auth CI job generates disposable credentials, masks them before use, and reports only numeric counts plus the real Playwright exit code. It does not upload auth reports, results, screenshots, evidence, or raw logs. These local outputs must not be published until the incomplete artifact privacy review is resolved.
+
+This fixture does not validate production identity providers, MFA, HTTPS transport security, or session expiry. Phase 4 is implemented and locally validated; its pull request, CI, and merge verification are pending.
+
 ## Evidence and Execution Activity Logs
 
 The custom evidence reporter stores each execution under its project, browser, and test case ID. PASS and FAIL executions remain separate:
@@ -205,7 +259,7 @@ Each execution directory contains attempt directories such as `ATTEMPT_0/`. An a
 
 When `EVIDENCE_RETENTION_ENABLED=true`, successful reporter finalization writes `execution-complete.json` under the logical execution's final status. With retention disabled, valid attempt evidence, screenshots, and activity logs can still be produced without that marker. Activity logs record attempt status separately from the final logical test status. Retry attempts share an execution ID; if retry statuses differ, their attempt directories can be under both PASS and FAIL roots.
 
-Automatic end-of-test screenshots show context; they do not prove each assertion. Tests can attach screenshots at meaningful verification points. The configured `on-first-retry` trace is absent for a successful test without retries. Evidence uses `UNASSIGNED` when `evidenceProject` metadata is not supplied.
+In the default and integration suites, automatic end-of-test screenshots show context; they do not prove each assertion. Tests can attach screenshots at meaningful verification points. The authentication suite disables automatic screenshots, traces, and videos while retaining its explicit safe-page verification attachments. The default and integration `on-first-retry` trace is absent for a successful test without retries. Evidence uses `UNASSIGNED` when `evidenceProject` metadata is not supplied.
 
 ### Latest-only evidence retention
 
@@ -215,7 +269,7 @@ The repository `.gitignore` excludes `test-evidence/`; review evidence locally a
 
 ## Current coverage and limitations
 
-This repository contains reusable framework components, not an application-specific end-to-end suite. `tests/auth.setup.ts` is a skipped placeholder; no reusable login flow is configured. Add application-specific tests and Page Objects under `tests/<project>/` and `pages/<project>/` after confirming project requirements and environment access.
+This repository contains reusable framework components and disposable public fixtures, not an application-specific end-to-end suite. `tests/auth.setup.ts` remains a skipped placeholder for real applications; the local authentication fixture is separate and uses only synthetic accounts. Add application-specific tests and Page Objects under `tests/<project>/` and `pages/<project>/` after confirming project requirements and environment access.
 
 Chromium, Firefox, and WebKit projects are configured. A project being configured does not imply that its browser execution has been validated.
 
@@ -225,7 +279,7 @@ Local Git exclusions are not included in fresh clones or GitHub Actions checkout
 
 For public framework changes, review the diff and sensitive-data scope, run the relevant static checks and targeted tests, then create a feature branch. Stage only approved files and commit after review. Create a Pull Request when approved, verify all relevant CI jobs, and merge only after approval. Confirm post-merge CI and synchronize local `main`. Keep private application-specific tests and evidence out of this public workflow.
 
-Completed: Phase 1 (CI Pipeline v1), Phase 2A (API automation), and Phase 2B (local API/UI integration). Phase 3 (data-driven testing) is implemented and locally validated; its Pull Request, CI, and merge verification are pending. Phases 4–7 remain planned only.
+Completed: Phase 1 (CI Pipeline v1), Phase 2A (API automation), Phase 2B (local API/UI integration), and Phase 3 (data-driven integration testing). Phase 4 (local authentication and RBAC) is implemented and locally validated; its Pull Request, CI, and merge verification are pending. Phases 5–7 remain planned.
 
 ## Security and publishing
 

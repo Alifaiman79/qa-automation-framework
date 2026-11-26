@@ -204,3 +204,69 @@ jobs:
           path: test-evidence/
           if-no-files-found: ignore
           retention-days: 7
+
+  authentication-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      AUTH_PORT: '4180'
+      EVIDENCE_PROJECT: portfolio-demo
+      EVIDENCE_RETENTION_ENABLED: 'false'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate TypeScript
+        run: npx tsc --noEmit
+
+      - name: Install Chromium and Linux dependencies
+        run: npx playwright install --with-deps chromium
+
+      - name: Run local authentication and RBAC tests
+        shell: bash
+        run: |
+          set +x
+          admin_password="$(node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('hex'))")"
+          standard_password="$(node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('hex'))")"
+          while [[ "$standard_password" == "$admin_password" ]]; do
+            standard_password="$(node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('hex'))")"
+          done
+          printf '::add-mask::%s\n' "$admin_password"
+          printf '::add-mask::%s\n' "$standard_password"
+          export AUTH_ADMIN_PASSWORD="$admin_password"
+          export AUTH_STANDARD_PASSWORD="$standard_password"
+          unset admin_password standard_password
+
+          auth_log="$(mktemp)"
+          trap 'rm -f "$auth_log"; unset AUTH_ADMIN_PASSWORD AUTH_STANDARD_PASSWORD' EXIT
+          set +e
+          npx playwright test -c playwright.auth.config.ts --project=chromium --workers=1 --retries=0 >"$auth_log" 2>&1
+          playwright_status=$?
+          summary="$(awk '
+            /^[[:space:]]*[0-9]+ (passed|failed|skipped)([[:space:]]|$)/ {
+              if ($2 == "passed") passed = $1
+              if ($2 == "failed") failed = $1
+              if ($2 == "skipped") skipped = $1
+              seen = 1
+            }
+            END {
+              if (seen) printf "%d passed, %d failed, %d skipped", passed + 0, failed + 0, skipped + 0
+              else printf "counts unavailable"
+            }
+          ' "$auth_log")"
+          summary="${summary:-counts unavailable}"
+          printf 'Authentication suite: %s; Playwright exit code: %d\n' "$summary" "$playwright_status"
+          if [[ "$playwright_status" -ne 0 ]]; then
+            printf '::error::Authentication suite failed; raw failure output withheld for privacy.\n'
+          fi
+          exit "$playwright_status"
