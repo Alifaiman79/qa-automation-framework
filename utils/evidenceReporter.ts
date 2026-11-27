@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
-import { copyFile, lstat, mkdir, readFile, readdir, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, readFile, readdir, rename, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { FullConfig, FullResult, Reporter, TestCase, TestResult, TestStep } from '@playwright/test/reporter';
+import type { FullConfig, FullResult, Reporter, Suite, TestCase, TestResult, TestStep } from '@playwright/test/reporter';
 
 type EvidenceStatus = 'PASS' | 'FAIL';
 type EvidenceKey = { project: string; browser: string; testCaseId: string };
@@ -44,9 +44,33 @@ type ExecutionState = {
   attemptLogs: AttemptLogFiles[];
   writeFailed: boolean;
 };
+type SummarySuite = 'default' | 'integration' | 'auth' | 'other';
+type SummaryOutcome = 'passed' | 'failed' | 'flaky' | 'skipped' | 'interrupted' | 'unexecuted';
+type SummaryTest = {
+  recordIndex: number;
+  testCaseId: string | null;
+  caseIdQuality: 'annotation' | 'title' | 'invalid-annotation' | 'conflict' | 'missing';
+  legacyEvidenceId: string | null;
+  project: string | null;
+  browser: string | null;
+  scope: string | null;
+  repeatEachIndex: number | null;
+  outcome: SummaryOutcome;
+  playwrightOutcome: ReturnType<TestCase['outcome']> | null;
+  expectedStatus: TestCase['expectedStatus'];
+  finalAttemptStatus: TestResult['status'] | null;
+  durationMs: number;
+  attempts: number;
+  retryAttempts: number;
+  duplicateRetentionKey: boolean;
+  evidence: string[];
+};
 const COMPLETE_FILE = 'execution-complete.json';
 const LOCK_NAME = '.retention-lock';
 const LOCK_OWNER_FILE = 'owner.token';
+const CASE_ID_PATTERN = /^[A-Z0-9]+_TC_(?:[A-Z0-9]+_)*[0-9]+$/i;
+const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/;
+const SAFE_SCOPES = new Set(['SMOKE', 'API', 'API_UI_INTEGRATION', 'AUTH', 'AUTHENTICATION', 'RBAC']);
 
 /** Cleanup helper exported so retention can be validated against isolated fixture trees. */
 export async function pruneEvidenceForKey(evidenceRoot: string, key: EvidenceKey): Promise<void> {
@@ -90,6 +114,17 @@ async function isRealDirectory(directory: string): Promise<boolean> {
   catch { return false; }
 }
 
+async function hasRealDirectoryAncestors(directory: string): Promise<boolean> {
+  const resolved = path.resolve(directory);
+  let current = path.parse(resolved).root;
+  if (!(await isRealDirectory(current))) return false;
+  for (const part of path.relative(current, resolved).split(path.sep).filter(Boolean)) {
+    current = path.join(current, part);
+    if (!(await isRealDirectory(current))) return false;
+  }
+  return true;
+}
+
 async function isInside(root: string, target: string): Promise<boolean> {
   const relative = path.relative(root, path.resolve(target));
   if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return false;
@@ -122,10 +157,33 @@ export default class EvidenceReporter implements Reporter {
   private lockOwned = false;
   private lockPath = '';
   private lockToken = '';
+  private discoveredTests: TestCase[] = [];
+  private readonly startedTests = new Set<TestCase>();
+  private globalErrorCount = 0;
+  private summarySuite: SummarySuite = 'other';
+  private summaryId = '';
+  private summaryConfigProject: string | null = null;
 
-  async onBegin(config: FullConfig): Promise<void> {
+  async onBegin(config: FullConfig, suite: Suite): Promise<void> {
     this.configProject = this.readProject(config.metadata) || 'UNASSIGNED';
     this.cleanupEnabled = process.env.EVIDENCE_RETENTION_ENABLED === 'true';
+    try {
+      this.summaryConfigProject = typeof config.metadata.evidenceProject === 'string'
+        ? this.validatedSegment(config.metadata.evidenceProject) : null;
+      this.discoveredTests = suite.allTests();
+      const configName = path.basename(config.configFile || '');
+      this.summarySuite = configName === 'playwright.config.ts' ? 'default'
+        : configName === 'playwright.integration.config.ts' ? 'integration'
+          : configName === 'playwright.auth.config.ts' ? 'auth' : 'other';
+      this.summaryId = `${new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')}-${randomBytes(16).toString('hex')}`;
+    } catch {
+      this.summaryId = '';
+      this.diagnostic('Execution summary initialization failed; test results are unaffected.');
+    }
+  }
+
+  onError(): void {
+    this.globalErrorCount += 1;
   }
 
   private async acquireRetentionLock(): Promise<boolean> {
@@ -198,6 +256,7 @@ export default class EvidenceReporter implements Reporter {
   }
 
   onTestBegin(test: TestCase, result: TestResult): void {
+    this.startedTests.add(test);
     const { key } = this.getTestContext(test);
     this.attemptTimings.set(this.attemptKey(test, key, result.retry), { startedAtMs: Date.now() });
   }
@@ -299,59 +358,254 @@ export default class EvidenceReporter implements Reporter {
   }
 
   async onEnd(result: FullResult): Promise<void> {
-    await this.finalizeActivityLogs();
-    if (!this.cleanupEnabled) {
-      this.diagnostic('onEnd skipped retention because cleanup is disabled.');
-      return;
-    }
-    if (result.status === 'interrupted' || result.status === 'timedout') {
-      this.diagnostic(`onEnd skipped completion markers and cleanup for ${result.status} run.`);
-      return;
-    }
-    const eligibleExecutions = [...this.executions.values()].filter(
-      (execution) => !execution.writeFailed && execution.attempts.length > 0,
-    );
-    if (eligibleExecutions.length !== this.executions.size) {
-      this.diagnostic('Completion markers skipped for one or more incomplete executions.');
-    }
-    if (eligibleExecutions.length === 0) {
-      this.diagnostic('onEnd skipped retention because there is no complete evidence to retain.');
-      return;
-    }
-    if (!(await this.acquireRetentionLock())) return;
-
     try {
-      const keys = new Map<string, EvidenceKey>();
-      for (const execution of eligibleExecutions) {
-        const record: ExecutionRecord = { version: 1, executionId: execution.executionId, key: execution.key, completedAt: new Date().toISOString(), attempts: execution.attempts };
-        const finalStatus = execution.attempts[execution.attempts.length - 1].status;
-        const directory = path.join(this.evidenceRoot, finalStatus, execution.key.project, execution.key.browser, execution.key.testCaseId, execution.executionId);
-        try {
-          await writeFile(path.join(directory, COMPLETE_FILE), JSON.stringify(record, null, 2), { encoding: 'utf8', flag: 'wx' });
-        } catch (error) {
-          this.diagnostic(`Execution completion marker write failed (${this.errorCode(error)}); cleanup aborted.`);
-          return;
-        }
-        keys.set(JSON.stringify(execution.key), execution.key);
+      await this.finalizeActivityLogs();
+      if (!this.cleanupEnabled) {
+        this.diagnostic('onEnd skipped retention because cleanup is disabled.');
+        return;
       }
-      for (const [serializedKey, key] of keys) {
-        const hasFailedWrite = [...this.executions.values()].some((execution) => JSON.stringify(execution.key) === serializedKey && execution.writeFailed);
-        if (hasFailedWrite) {
-          this.diagnostic('Cleanup skipped for a case with incomplete attempt evidence.');
-          continue;
-        }
-        try {
-          await pruneEvidenceForKey(this.evidenceRoot, key);
-        } catch (error) {
-          this.diagnostic(`Evidence cleanup failed (${this.errorCode(error)}); remaining evidence was left in place.`);
-        }
+      if (result.status === 'interrupted' || result.status === 'timedout') {
+        this.diagnostic(`onEnd skipped completion markers and cleanup for ${result.status} run.`);
+        return;
       }
-    } catch (error) {
-      // Retention failures are non-fatal; existing evidence is preserved where possible.
-      this.diagnostic(`Retention lifecycle failed (${this.errorCode(error)}).`);
+      const eligibleExecutions = [...this.executions.values()].filter(
+        (execution) => !execution.writeFailed && execution.attempts.length > 0,
+      );
+      if (eligibleExecutions.length !== this.executions.size) {
+        this.diagnostic('Completion markers skipped for one or more incomplete executions.');
+      }
+      if (eligibleExecutions.length === 0) {
+        this.diagnostic('onEnd skipped retention because there is no complete evidence to retain.');
+        return;
+      }
+      if (!(await this.acquireRetentionLock())) return;
+
+      try {
+        const keys = new Map<string, EvidenceKey>();
+        for (const execution of eligibleExecutions) {
+          const record: ExecutionRecord = { version: 1, executionId: execution.executionId, key: execution.key, completedAt: new Date().toISOString(), attempts: execution.attempts };
+          const finalStatus = execution.attempts[execution.attempts.length - 1].status;
+          const directory = path.join(this.evidenceRoot, finalStatus, execution.key.project, execution.key.browser, execution.key.testCaseId, execution.executionId);
+          try {
+            await writeFile(path.join(directory, COMPLETE_FILE), JSON.stringify(record, null, 2), { encoding: 'utf8', flag: 'wx' });
+          } catch (error) {
+            this.diagnostic(`Execution completion marker write failed (${this.errorCode(error)}); cleanup aborted.`);
+            return;
+          }
+          keys.set(JSON.stringify(execution.key), execution.key);
+        }
+        for (const [serializedKey, key] of keys) {
+          const hasFailedWrite = [...this.executions.values()].some((execution) => JSON.stringify(execution.key) === serializedKey && execution.writeFailed);
+          if (hasFailedWrite) {
+            this.diagnostic('Cleanup skipped for a case with incomplete attempt evidence.');
+            continue;
+          }
+          try {
+            await pruneEvidenceForKey(this.evidenceRoot, key);
+          } catch (error) {
+            this.diagnostic(`Evidence cleanup failed (${this.errorCode(error)}); remaining evidence was left in place.`);
+          }
+        }
+      } catch (error) {
+        // Retention failures are non-fatal; existing evidence is preserved where possible.
+        this.diagnostic(`Retention lifecycle failed (${this.errorCode(error)}).`);
+      } finally {
+        await this.releaseRetentionLock();
+      }
     } finally {
-      await this.releaseRetentionLock();
+      try {
+        await this.writeExecutionSummary(result);
+      } catch {
+        this.diagnostic('Execution summary write failed; no finalized summary was published.');
+      }
     }
+  }
+
+  private validatedCaseId(value: string | undefined): string | null {
+    return value && value.length <= 80 && CASE_ID_PATTERN.test(value) ? value.toUpperCase() : null;
+  }
+
+  private summaryCaseId(test: TestCase): Pick<SummaryTest, 'testCaseId' | 'caseIdQuality'> {
+    const annotation = [...test.annotations].reverse().find((item) => item.type === 'testCaseId');
+    const annotatedId = this.validatedCaseId(annotation?.description);
+    const title = [...test.titlePath(), test.title].join(' ');
+    const titleId = this.validatedCaseId(title.match(/\b[A-Z0-9]+_TC_(?:[A-Z0-9]+_)*\d+\b/i)?.[0]);
+    if (annotatedId && titleId && annotatedId !== titleId) {
+      return { testCaseId: annotatedId, caseIdQuality: 'conflict' };
+    }
+    if (annotatedId) return { testCaseId: annotatedId, caseIdQuality: 'annotation' };
+    if (annotation) return { testCaseId: titleId, caseIdQuality: 'invalid-annotation' };
+    return { testCaseId: titleId, caseIdQuality: titleId ? 'title' : 'missing' };
+  }
+
+  private validatedSegment(value: string): string | null {
+    return SAFE_SEGMENT_PATTERN.test(value) ? value : null;
+  }
+
+  private summaryProject(test: TestCase): string | null {
+    const annotation = [...test.annotations].reverse().find((item) => item.type === 'evidenceProject');
+    if (annotation) return this.validatedSegment(annotation.description || '');
+    const projectMetadata = test.parent.project()?.metadata.evidenceProject;
+    if (projectMetadata !== undefined) {
+      return typeof projectMetadata === 'string' ? this.validatedSegment(projectMetadata) : null;
+    }
+    return this.summaryConfigProject;
+  }
+
+  private summaryOutcome(test: TestCase, overallStatus: FullResult['status']): SummaryOutcome {
+    const finalAttempt = test.results.at(-1);
+    if (!finalAttempt) return 'unexecuted';
+    if (finalAttempt.status === 'interrupted') return 'interrupted';
+    if (finalAttempt.status === 'skipped') {
+      // Playwright may synthesize skipped results for tests never started after an interruption or setup failure.
+      if (test.expectedStatus === 'skipped' || this.startedTests.has(test)) return 'skipped';
+      return 'unexecuted';
+    }
+    if (overallStatus === 'interrupted' && !this.startedTests.has(test)) return 'unexecuted';
+    const outcome = test.outcome();
+    if (outcome === 'flaky') return 'flaky';
+    if (outcome === 'expected') return 'passed';
+    if (outcome === 'unexpected') return 'failed';
+    return 'unexecuted';
+  }
+
+  private async summaryEvidence(test: TestCase, safeProject: string | null,
+    safeBrowser: string | null): Promise<string[]> {
+    const references: string[] = [];
+    if (!safeProject || !safeBrowser) return references;
+    if (!(await isRealDirectory(this.evidenceRoot))) return references;
+    for (const execution of this.executions.values()) {
+      if (execution.testCase !== test || execution.writeFailed) continue;
+      const { project, browser, testCaseId } = execution.key;
+      if (project !== safeProject || browser !== safeBrowser) continue;
+      if (![project, browser, testCaseId, execution.executionId].every((segment) => this.validatedSegment(segment))) continue;
+      for (const attempt of execution.attempts) {
+        if (!Number.isSafeInteger(attempt.retry) || attempt.retry < 0) continue;
+        const relative = path.join(attempt.status, project, browser, testCaseId,
+          execution.executionId, `ATTEMPT_${attempt.retry}`);
+        const directory = path.join(this.evidenceRoot, relative);
+        if (!(await isRealDirectory(directory)) || !(await isInside(this.evidenceRoot, directory))) continue;
+        try {
+          const marker = await lstat(path.join(directory, 'attempt-complete.json'));
+          if (marker.isFile() && !marker.isSymbolicLink()) references.push(relative.split(path.sep).join('/'));
+        } catch { /* An absent or incomplete attempt is not referenced. */ }
+      }
+    }
+    return references;
+  }
+
+  private async writeExecutionSummary(result: FullResult): Promise<void> {
+    if (!this.summaryId) throw new Error('Summary lifecycle did not start');
+    const retentionKeys = new Map<string, number>();
+    for (const test of this.discoveredTests) {
+      const key = this.getTestContext(test).key;
+      const serialized = JSON.stringify(key);
+      retentionKeys.set(serialized, (retentionKeys.get(serialized) || 0) + 1);
+    }
+
+    const tests: SummaryTest[] = [];
+    for (const [index, test] of this.discoveredTests.entries()) {
+      const context = this.getTestContext(test);
+      const { key } = context;
+      const attempts = test.results.filter((attempt) => attempt.status !== 'skipped');
+      const caseId = this.summaryCaseId(test);
+      const legacyId = this.validatedCaseId(key.testCaseId);
+      const outcome = this.summaryOutcome(test, result.status);
+      const finalAttempt = test.results.at(-1);
+      const safeProject = this.summaryProject(test);
+      const safeBrowser = this.validatedSegment(test.parent.project()?.name || 'UNASSIGNED');
+      tests.push({
+        recordIndex: index + 1,
+        ...caseId,
+        legacyEvidenceId: legacyId !== caseId.testCaseId ? legacyId : null,
+        project: safeProject,
+        browser: safeBrowser,
+        scope: SAFE_SCOPES.has(context.testScope) ? context.testScope : null,
+        repeatEachIndex: Number.isSafeInteger(test.repeatEachIndex) && test.repeatEachIndex >= 0
+          ? test.repeatEachIndex : null,
+        outcome,
+        playwrightOutcome: outcome === 'unexecuted' ? null : test.outcome(),
+        expectedStatus: test.expectedStatus,
+        finalAttemptStatus: finalAttempt?.status || null,
+        durationMs: attempts.reduce((sum, attempt) => sum + (Number.isFinite(attempt.duration)
+          ? Math.max(0, attempt.duration) : 0), 0),
+        attempts: attempts.length,
+        retryAttempts: attempts.filter((attempt) => attempt.retry > 0).length,
+        duplicateRetentionKey: (retentionKeys.get(JSON.stringify(key)) || 0) > 1,
+        evidence: await this.summaryEvidence(test, safeProject, safeBrowser),
+      });
+    }
+
+    const count = (outcome: SummaryOutcome): number => tests.filter((test) => test.outcome === outcome).length;
+    const passed = count('passed');
+    const failed = count('failed');
+    const flaky = count('flaky');
+    const skipped = count('skipped');
+    const interrupted = count('interrupted');
+    const unexecuted = count('unexecuted');
+    const complete = tests.length > 0 && interrupted === 0 && unexecuted === 0
+      && this.globalErrorCount === 0 && result.status !== 'interrupted' && result.status !== 'timedout';
+    const denominator = passed + flaky + failed;
+    const counts = {
+      total: tests.length, passed, failed, flaky, skipped, interrupted, unexecuted,
+      totalAttempts: tests.reduce((sum, test) => sum + test.attempts, 0),
+      retryAttempts: tests.reduce((sum, test) => sum + test.retryAttempts, 0),
+      passRate: complete && denominator > 0 ? 100 * (passed + flaky) / denominator : null,
+    };
+    const wallDurationMs = Number.isFinite(result.duration) ? Math.max(0, result.duration) : null;
+    const summary = {
+      schemaVersion: 1,
+      summaryId: this.summaryId,
+      suite: this.summarySuite,
+      startedAt: result.startTime.toISOString(),
+      endedAt: wallDurationMs === null ? null : new Date(result.startTime.getTime() + wallDurationMs).toISOString(),
+      wallDurationMs,
+      overallStatus: result.status,
+      complete,
+      globalErrorCount: this.globalErrorCount,
+      counts,
+      tests,
+    };
+    const textSummary = [
+      `Suite: ${summary.suite}`,
+      `Summary ID: ${summary.summaryId}`,
+      `Overall status: ${summary.overallStatus}`,
+      `Complete: ${summary.complete ? 'yes' : 'no'}`,
+      `Logical tests: ${counts.total}`,
+      `Passed: ${passed}  Failed: ${failed}  Flaky: ${flaky}  Skipped: ${skipped}`,
+      `Interrupted: ${interrupted}  Unexecuted: ${unexecuted}  Global errors: ${this.globalErrorCount}`,
+      `Attempts: ${counts.totalAttempts}  Retry attempts: ${counts.retryAttempts}`,
+      `Pass rate: ${counts.passRate === null ? 'unavailable' : `${counts.passRate.toFixed(2)}%`}`,
+      `Wall duration: ${wallDurationMs === null ? 'unavailable' : `${wallDurationMs} ms`}`,
+      '',
+      'Tests:',
+      ...tests.map((test) => `${test.recordIndex}. ${test.testCaseId || 'NO_VALID_CASE_ID'}: ${test.outcome} (${test.attempts} attempts)`),
+      '',
+    ].join('\n');
+
+    const root = path.resolve(process.cwd(), 'run-summaries');
+    const suiteDirectory = path.join(root, this.summarySuite);
+    const pendingDirectory = path.join(suiteDirectory, `.pending-${this.summaryId}`);
+    const finalDirectory = path.join(suiteDirectory, this.summaryId);
+    if (path.relative(process.cwd(), root) !== 'run-summaries') throw new Error('Unsafe summary root');
+    if (!(await hasRealDirectoryAncestors(process.cwd()))) throw new Error('Unsafe workspace directory');
+    for (const directory of [root, suiteDirectory]) {
+      try { await mkdir(directory); }
+      catch (error) { if (this.errorCode(error) !== 'EEXIST') throw error; }
+      if (!(await isRealDirectory(directory))) throw new Error('Unsafe summary directory');
+    }
+    await mkdir(pendingDirectory);
+    if (!(await isRealDirectory(root)) || !(await isRealDirectory(suiteDirectory))
+      || !(await isRealDirectory(pendingDirectory))) throw new Error('Unsafe summary directory');
+    await writeFile(path.join(pendingDirectory, 'execution-summary.json'), JSON.stringify(summary, null, 2),
+      { encoding: 'utf8', flag: 'wx' });
+    await writeFile(path.join(pendingDirectory, 'execution-summary.txt'), `${textSummary}\n`,
+      { encoding: 'utf8', flag: 'wx' });
+    if (!(await isRealDirectory(root)) || !(await isRealDirectory(suiteDirectory))
+      || !(await isRealDirectory(pendingDirectory))) throw new Error('Unsafe summary directory');
+    try { await lstat(finalDirectory); throw new Error('Summary ID already exists'); }
+    catch (error) { if (this.errorCode(error) !== 'ENOENT') throw error; }
+    await rename(pendingDirectory, finalDirectory);
   }
 
   private async finalizeActivityLogs(): Promise<void> {
