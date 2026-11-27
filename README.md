@@ -1,6 +1,8 @@
 # Playwright TypeScript QA Automation Framework
 
-A reusable end-to-end test framework built with Playwright Test and TypeScript. It supports project-specific tests and Page Objects, environment-based configuration, screenshots, HTML reports, per-attempt activity logs, and optional evidence retention.
+A personal Playwright Test and TypeScript framework demonstrating UI smoke tests against public TodoMVC, API tests against public DummyJSON, and data-driven API/UI integration and authentication/RBAC tests against disposable local fixtures. Four GitHub Actions jobs run these suites. A custom reporter organizes per-attempt evidence and per-invocation execution summaries.
+
+The local fixtures use synthetic data and do not connect to a production application or identity provider. Application-specific tests and Page Objects can be added for approved projects; none are included here.
 
 ## Technology stack
 
@@ -16,7 +18,7 @@ Dependencies are listed in `package.json` and pinned by `package-lock.json`.
 
 ```text
 fixtures/                 Shared test fixtures and verification screenshot helper
-pages/<project>/          Project-specific Page Objects
+pages/<project>/          Optional convention for future project-specific Page Objects
 test-data/                Reusable, non-sensitive test data
 test-data/api/            Typed synthetic API request data
 test-data/integration/    Typed local integration case datasets
@@ -30,6 +32,7 @@ playwright.integration.config.ts  Isolated integration test configuration
 playwright.auth.config.ts         Isolated authentication test configuration
 tests/auth.setup.ts       Authentication setup placeholder (currently skipped)
 utils/                    Shared helpers and the evidence reporter
+validation/reporting/     Isolated synthetic reporter validation harness
 auth/                     Reserved for local authentication state; never commit it
 playwright.config.ts      Playwright projects, browser settings, and reporters
 tsconfig.json             TypeScript compiler settings
@@ -39,16 +42,20 @@ Guidline.MD               QA automation guide
 Workflow.md               QA automation workflow
 ```
 
-## Installation and setup
+## Quick start and setup
 
-Use PowerShell from the repository root:
+Use PowerShell from a fresh clone to run the public examples. No private `.env` file or application credentials are needed:
 
 ```powershell
 npm ci
-if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+npx playwright install chromium
+$env:BASE_URL = 'https://demo.playwright.dev/todomvc/'
+npx playwright test tests/demo/ --project=chromium --workers=1 --grep '@smoke'
+$env:API_BASE_URL = 'https://dummyjson.com'
+npx playwright test tests/api/ --project=api --grep '@api' --workers=1
 ```
 
-The default `playwright.config.ts` imports `dotenv/config`, so its UI and API projects load the local `.env`. Edit that file only for an approved test environment. `.env` is ignored by Git; never commit credentials, tokens, cookies, or real authentication state.
+The default `playwright.config.ts` imports `dotenv/config`, so its UI and API projects load a local `.env` if present. For an approved application environment, you can create one with `if (-not (Test-Path .env)) { Copy-Item .env.example .env }`, then replace its placeholders with approved values. The example `BASE_URL` is not a working application target. `.env` is ignored by Git; never commit credentials, tokens, cookies, or real authentication state.
 
 The checked-in `.env.example` contains placeholders:
 
@@ -70,7 +77,7 @@ Type-check the project:
 npx tsc --noEmit
 ```
 
-Run the default configuration (browser and API projects; the dedicated integration and authentication suites are excluded):
+Run the default configuration (browser and API projects; the dedicated integration and authentication suites are excluded) only after configuring its targets and installing the relevant browsers. A fresh clone with the placeholder `BASE_URL` is not ready for this all-project command:
 
 ```powershell
 npx playwright test
@@ -95,14 +102,9 @@ Playwright test results and reports are written to ignored local output director
 
 ## GitHub Actions
 
-The CI workflow defines four independent jobs covering 24 unique tests: one tagged Chromium UI smoke test, six DummyJSON API tests, eight local API/UI integration tests, and nine local authentication and RBAC tests. Each job validates TypeScript. The first three jobs upload separate reports, results, and evidence for seven days; the authentication job uploads no artifacts while its publication privacy review remains incomplete. Browser jobs install Chromium; the API job uses Playwright's request fixture. The smoke job uses the public TodoMVC demo. Local validation results below are not claims about a current CI run.
+The CI workflow defines four independent jobs covering 24 unique tests: `chromium-smoke` (one public UI test), `api-tests` (six DummyJSON tests), `integration-tests` (eight local API/UI tests), and `authentication-tests` (nine local auth and RBAC tests). Each job validates TypeScript. The first three jobs upload separate reports, results, and evidence for seven days; the authentication job uploads no raw authentication artifacts while its publication privacy review remains incomplete. Browser jobs install Chromium; the API job uses Playwright's request fixture. The Phase 5 post-merge run on `main` completed successfully. Local validation results below describe separate local runs.
 
-Run the public smoke test locally from PowerShell by setting `BASE_URL` explicitly:
-
-```powershell
-$env:BASE_URL = 'https://demo.playwright.dev/todomvc/'
-npx playwright test tests/demo/ --project=chromium --workers=1 --grep '@smoke'
-```
+The public smoke command is in [Quick start and setup](#quick-start-and-setup).
 
 In GitHub, open the completed workflow run and download its artifacts from the run summary. Manual runs can override the smoke job's grep filter; that job remains restricted to `tests/demo/`.
 
@@ -110,12 +112,7 @@ In GitHub, open the completed workflow run and download its artifacts from the r
 
 API tests use Playwright's built-in `request` fixture through the shared test export. `API_BASE_URL` configures the API project separately from the browser UI `BASE_URL`; the safe public default is `https://dummyjson.com`.
 
-Run the API tests locally from PowerShell:
-
-```powershell
-$env:API_BASE_URL = 'https://dummyjson.com'
-npx playwright test tests/api/ --project=api --grep '@api' --workers=1
-```
+The public API command is in [Quick start and setup](#quick-start-and-setup).
 
 The API project does not require a browser installation when its tests use only the `request` fixture. DummyJSON simulates POST, PUT, PATCH, and DELETE responses; those writes are not persisted, so the tests validate response status and body rather than a later GET reflecting the write. GitHub Actions runs the API suite in a separate job from the Chromium UI smoke job, with separate report and evidence artifacts.
 
@@ -289,7 +286,7 @@ Validate the reporter in an isolated synthetic temporary environment:
 node validation/reporting/summary-validation.cjs
 ```
 
-Phase 5 local validation: the original full regression passed 24/24 before the scope correction; the updated synthetic harness passed 113 assertions with zero failures or blocks; the targeted post-correction auth regression passed 9/9, with six `AUTHENTICATION` and three `RBAC` summary records. Phase 5 publishing and CI verification remain pending. `run-summaries/` is Git-ignored and local-only, including authentication summaries. Do not publish authentication reports, evidence, or summaries. Field allowlists and text redaction reduce exposure but cannot establish that arbitrary identifiers, screenshots, binary attachments, or HTML reports are safe to share.
+Phase 5 local validation: the original full regression passed 24/24 before the scope correction; the updated synthetic harness passed 113 assertions with zero failures or blocks; the targeted post-correction auth regression passed 9/9, with six `AUTHENTICATION` and three `RBAC` summary records. Phase 5 was merged through PR #7, and its post-merge CI run passed. `run-summaries/` is Git-ignored and local-only; CI does not automatically upload these summaries. Do not publish authentication reports, evidence, or summaries. Field allowlists and text redaction reduce exposure but cannot establish that arbitrary identifiers, screenshots, binary attachments, or HTML reports are safe to share.
 
 ## Current coverage and limitations
 
@@ -303,7 +300,7 @@ Local Git exclusions are not included in fresh clones or GitHub Actions checkout
 
 For public framework changes, review the diff and sensitive-data scope, run the relevant static checks and targeted tests, then create a feature branch. Stage only approved files and commit after review. Create a Pull Request when approved, verify all relevant CI jobs, and merge only after approval. Confirm post-merge CI and synchronize local `main`. Keep private application-specific tests and evidence out of this public workflow.
 
-Completed: Phase 1 (CI Pipeline v1), Phase 2A (API automation), Phase 2B (local API/UI integration), Phase 3 (data-driven integration testing), and Phase 4 (local authentication and RBAC). Phase 5 execution summaries are implemented and locally validated; CI and publication review remain pending. Phases 6–7 remain planned.
+Completed and merged: Phases 1–5, covering CI, API, local API/UI integration, data-driven testing, local authentication/RBAC, and execution reporting. Phase 6 is intentionally deferred; Phase 7 portfolio documentation polish is in progress. Authentication artifact and summary publication remain restricted.
 
 ## Security and publishing
 
