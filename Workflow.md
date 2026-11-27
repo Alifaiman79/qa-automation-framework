@@ -7,12 +7,12 @@
 5. **Review test logic** — Prefer stable semantic locators, auto-retrying assertions, and exact text when exact output is required. Put state cleanup in `finally` and retain original and cleanup failures.
 6. **Validate statically** — Run TypeScript validation and review the diff, file scope, and sensitive-data exposure.
 7. **Execute with approval** — Confirm the approved environment, then run the targeted test with the appropriate Playwright config.
-8. **Review evidence** — Record the actual outcome, contextual screenshots, verification-point attachments, activity logs, and retention outcome. A successful test without a retry has no `on-first-retry` trace; retention-disabled runs may lack `execution-complete.json` while retaining valid attempt evidence. Missing project metadata uses `UNASSIGNED`.
+8. **Review summary and evidence** — Check the invocation summary's actual status and completion indicator, then review relevant attempt evidence, contextual screenshots, verification-point attachments, activity logs, and retention outcome. A successful test without a retry has no `on-first-retry` trace; retention-disabled runs may lack `execution-complete.json` while retaining valid attempt evidence. Missing project metadata uses `UNASSIGNED`.
 9. **Investigate failures** — Separate application defects from environment, data, locator, authentication, and automation failures. Report verified defects with approved evidence.
 10. **Prepare a public contribution** — Keep private application tests, URLs, credentials, and evidence out of the public framework repository.
 11. **Create a feature branch** — Do so only when approved, then stage only approved files.
 12. **Commit and open a Pull Request** — Review the exact staged diff and obtain approval for each Git write or remote action.
-13. **Verify CI** — Check the applicable smoke, API, and integration jobs and their artifacts.
+13. **Verify CI** — Check `chromium-smoke`, `api-tests`, `integration-tests`, and `authentication-tests` as applicable. Authentication CI does not publish raw authentication artifacts; keep its evidence and summaries local.
 14. **Merge after approval** — Use the reviewed Pull Request and required checks.
 15. **Confirm delivery** — Verify post-merge CI and synchronize local `main`.
 

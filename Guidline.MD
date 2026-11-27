@@ -63,7 +63,7 @@ This guide primarily covers application-specific UI cases. First decide whether 
 You are helping with an existing Playwright + TypeScript QA Automation framework.
 
 First inspect the project files and CLAUDE.md (if available). Reuse existing
-Page Objects (pages/), fixtures/, utils/, and test-data/. Do not reinstall
+Page Objects (pages/), if present, fixtures/, utils/, and test-data/. Do not reinstall
 dependencies, duplicate code, overwrite tests, or change unrelated files.
 
 Project: [NAME]
@@ -91,7 +91,7 @@ Task:
 
 ## 4. Execution reference
 
-Use the UI, API, or integration commands in [README.md](README.md). The local integration suite requires its dedicated Playwright config. Confirm the environment and authorization before running any test.
+Use the UI, API, integration, or authentication commands in [README.md](README.md). The local integration and authentication suites each require their dedicated Playwright config. Confirm the environment and authorization before running any test.
 
 ## 5. Rules to remember
 
@@ -100,8 +100,11 @@ Use the UI, API, or integration commands in [README.md](README.md). The local in
 -   The default Playwright config loads `.env` for UI and API runs. The dedicated
     integration config runs a local loopback fixture and does not load dotenv; it reads process environment variables
     such as `INTEGRATION_PORT` (default `4179`) and `EVIDENCE_PROJECT` (default
-    `UNASSIGNED`). Set those explicitly in PowerShell or CI. Confirm the active
-    environment before every run.
+    `UNASSIGNED`). The dedicated auth config also uses process environment variables,
+    not `.env`, and requires distinct synthetic runtime passwords. Follow the
+    [README authentication setup](README.md#authentication-and-rbac-testing); never
+    commit real credentials. Set the relevant variables in PowerShell or CI and
+    confirm the active environment before every run.
 -   `CLAUDE.md` provides project guidance to Claude; for other AI tools,
     explicitly ask them to read it or paste the prompt above.
 -   Codegen is an optional UI starting point: clean selectors and add real

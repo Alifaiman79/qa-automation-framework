@@ -6,13 +6,15 @@ This is a reusable Playwright Test and TypeScript framework for public examples 
 
 - `tests/demo/`: public Chromium UI smoke test.
 - `tests/api/`: DummyJSON request-fixture tests; simulated writes are not persisted.
-- `tests/integration/`: local API/UI test using the in-memory server in `tests/integration/support/items-app.cjs`.
-- `playwright.config.ts`: browser and API projects; excludes the dedicated integration suite.
+- `tests/integration/`: local API/UI and data-driven tests using the in-memory server in `tests/integration/support/items-app.cjs`.
+- `tests/auth/`: local authentication and RBAC tests using the synthetic server in `tests/auth/support/auth-app.cjs`.
+- `playwright.config.ts`: browser and API projects; excludes the dedicated integration and authentication suites.
 - `playwright.integration.config.ts`: local Chromium integration project, one worker and no retries.
-- `pages/`, `fixtures/`, `utils/`, `test-data/`: reusable UI interactions, fixtures, helpers, and non-sensitive data.
+- `playwright.auth.config.ts`: local Chromium authentication project with isolated outputs and no automatic trace, video, or screenshot.
+- `fixtures/`, `utils/`, `test-data/`: shared fixtures, helpers, reporting, and non-sensitive data. `pages/<project>/` is an optional convention; no Page Objects are currently tracked.
 - `tests/auth.setup.ts`: skipped placeholder, not a working login flow.
 
-Read existing tests, Page Objects, `fixtures/testFixtures.ts`, `utils/helpers.ts`, and relevant test data before adding components. Keep shared code project-neutral. Use TypeScript for Playwright and shared code; the existing local Node.js `.cjs` integration server is a narrow exception. Do not add dependencies or alter unrelated files without approval.
+Read existing tests, any relevant Page Objects, `fixtures/testFixtures.ts`, `utils/helpers.ts`, and test data before adding components. Keep shared code project-neutral. Use TypeScript for Playwright and shared code; the integration and authentication fixture servers are disposable Node.js `.cjs` exceptions. Do not add dependencies or alter unrelated files without approval.
 
 Never delete, overwrite, disable, or replace an existing test without explicit user approval. Preserve existing framework behavior unless a change is explicitly approved. Stop and request clarification when requirements or expected results are ambiguous.
 
