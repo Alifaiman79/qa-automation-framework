@@ -53,8 +53,9 @@ This guide primarily covers application-specific UI cases. First decide whether 
     issue, test-data issue, auth issue, or environment issue. Never
     weaken assertions merely to pass.
 
-6.  Review evidence, then update Jira/Zephyr with the **actual** result
-    and defect reference when applicable.
+6.  Review the invocation summary and relevant evidence, then update Jira/Zephyr
+    with the **actual** result and defect reference when applicable. Keep
+    authentication summaries and artifacts local.
 
 ## 3. Copy-paste prompt for any AI assistant
 
@@ -105,16 +106,29 @@ Use the UI, API, or integration commands in [README.md](README.md). The local in
     explicitly ask them to read it or paste the prompt above.
 -   Codegen is an optional UI starting point: clean selectors and add real
     assertions.
--   The current config captures an end-of-test screenshot for every test,
-    as contextual evidence rather than proof of each assertion. Attach
-    verification-point screenshots when they add useful proof. Evidence uses
-    `UNASSIGNED` if no project metadata is supplied.
+-   The default and integration configs capture contextual end-of-test
+    screenshots; these do not prove every assertion. The dedicated auth config
+    disables automatic screenshots, traces, and videos, while auth tests attach
+    selected verification screenshots on safe pages. Evidence uses `UNASSIGNED`
+    if no project metadata is supplied.
     `execution-complete.json` requires enabled retention and successful reporter
     finalization; disabled retention can still leave complete attempt evidence.
-    The config retains videos on failure and captures traces on the first retry
-    **only if a retry occurs**, or use `--trace on`.
+    The default and integration configs retain videos on failure and capture
+    traces on the first retry **only if a retry occurs**.
 -   The evidence reporter writes per-attempt JSON and text activity logs.
     Latest-only evidence retention is controlled by
     `EVIDENCE_RETENTION_ENABLED=true`; incomplete or legacy evidence is preserved.
+-   The reporter also writes `execution-summary.json` and `execution-summary.txt`
+    under `run-summaries/<suite>/<summary-id>/` after each invocation, including
+    retention-disabled runs. Open the newest directory for `default`,
+    `integration`, `auth`, or `other`. Check Playwright's actual overall status
+    and `complete` before interpreting logical passed/failed/flaky/skipped counts;
+    a completed failed run differs from an interrupted or unexecuted run.
+    Attempts and retries count physical executions separately from logical tests.
+    Trace a valid case ID through its project, browser, execution, and relative
+    evidence reference to an `attempt-complete.json` marker. Later retention may
+    remove older evidence without removing summary history. Review identifiers
+    and attachments for sensitive information before any approved sharing;
+    authentication summaries and artifacts must stay local.
 -   No real app tests or reusable login flow are configured yet:
     complete those per application.

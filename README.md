@@ -95,7 +95,7 @@ Playwright test results and reports are written to ignored local output director
 
 ## GitHub Actions
 
-The CI workflow defines four independent jobs covering 24 unique tests: one tagged Chromium UI smoke test, six DummyJSON API tests, eight local API/UI integration tests, and nine local authentication and RBAC tests. Each job validates TypeScript. The first three jobs upload separate reports, results, and evidence for seven days; the authentication job uploads no artifacts while its publication privacy review remains incomplete. Browser jobs install Chromium; the API job uses Playwright's request fixture. The smoke job uses the public TodoMVC demo. The new authentication job has not yet run in a pull request or on `main`.
+The CI workflow defines four independent jobs covering 24 unique tests: one tagged Chromium UI smoke test, six DummyJSON API tests, eight local API/UI integration tests, and nine local authentication and RBAC tests. Each job validates TypeScript. The first three jobs upload separate reports, results, and evidence for seven days; the authentication job uploads no artifacts while its publication privacy review remains incomplete. Browser jobs install Chromium; the API job uses Playwright's request fixture. The smoke job uses the public TodoMVC demo. Local validation results below are not claims about a current CI run.
 
 Run the public smoke test locally from PowerShell by setting `BASE_URL` explicitly:
 
@@ -237,9 +237,9 @@ Remove-Item Env:AUTH_STANDARD_PASSWORD -ErrorAction SilentlyContinue
 
 Local validation passed: 9/9 sequential, 9/9 independently, and 9/9 with two workers; existing UI, API, and integration regression passed 1/1, 6/6, and 8/8. The evidence reporter retains separate PASS/FAIL attempts using the case annotations, with manually captured verification screenshots on safe post-login or access-denied pages. The auth CI job generates disposable credentials, masks them before use, and reports only numeric counts plus the real Playwright exit code. It does not upload auth reports, results, screenshots, evidence, or raw logs. These local outputs must not be published until the incomplete artifact privacy review is resolved.
 
-This fixture does not validate production identity providers, MFA, HTTPS transport security, or session expiry. Phase 4 is implemented and locally validated; its pull request, CI, and merge verification are pending.
+This local synthetic fixture does not validate production identity providers, MFA, HTTPS transport security, or session expiry. Phase 4 is included in `main` and locally validated; authentication artifacts remain publication-prohibited.
 
-## Evidence and Execution Activity Logs
+## Evidence and execution reporting
 
 The custom evidence reporter stores each execution under its project, browser, and test case ID. PASS and FAIL executions remain separate:
 
@@ -267,6 +267,30 @@ Retention is enabled only when `EVIDENCE_RETENTION_ENABLED=true`. After evidence
 
 The repository `.gitignore` excludes `test-evidence/`; review evidence locally and share it through an approved channel when needed. Do not commit screenshots, traces, videos, or logs that may contain application or personal data.
 
+### Per-invocation execution summaries
+
+The same reporter writes schema version 1 JSON and readable text summaries after each Playwright invocation, independently of evidence retention. Each run receives a timestamp-and-random summary ID, so the default UI/API config, integration config, and auth config keep separate histories; an unrecognized config uses `other`:
+
+```text
+run-summaries/
+  <default|integration|auth|other>/
+    <SUMMARY_ID>/
+      execution-summary.json
+      execution-summary.txt
+```
+
+Open the newest invocation directory for the suite you ran. The JSON records Playwright's actual overall status, a completion indicator, global-error count, discovered logical test totals, passed/failed/flaky/skipped/interrupted/unexecuted counts, non-skipped attempt and retry counts, and wall-clock duration. Each logical test appears once. `outcome` describes its logical result; `finalAttemptStatus` records its final physical attempt. For example, an expected failure can be logically passed with a physically failed attempt. A completed failed run differs from an incomplete run: `complete` is false for an empty run, unexecuted or interrupted tests, global errors, or an interrupted/timed-out overall run. Pass rate is `100 × (passed + flaky) / (passed + flaky + failed)`; it is unavailable when the denominator is zero or the run is incomplete. Flaky tests remain a separate count.
+
+Summary case IDs prefer a valid `testCaseId` annotation, then a title ID. Conflicts and invalid IDs are flagged; legacy evidence path naming is unchanged. Scope is restricted to validated values, including `AUTHENTICATION` and `RBAC`. Relative evidence references point only to attempts with an `attempt-complete.json` marker at summary finalization. Match the case ID, project, browser, execution ID, and attempt to locate evidence. Later retention can remove older referenced evidence; summary history itself is not automatically cleaned by evidence retention. Abrupt process termination may prevent finalization, while a summary-write failure leaves the original Playwright result unchanged and reports a fixed diagnostic.
+
+Validate the reporter in an isolated synthetic temporary environment:
+
+```powershell
+node validation/reporting/summary-validation.cjs
+```
+
+Phase 5 local validation: the original full regression passed 24/24 before the scope correction; the updated synthetic harness passed 113 assertions with zero failures or blocks; the targeted post-correction auth regression passed 9/9, with six `AUTHENTICATION` and three `RBAC` summary records. Phase 5 publishing and CI verification remain pending. `run-summaries/` is Git-ignored and local-only, including authentication summaries. Do not publish authentication reports, evidence, or summaries. Field allowlists and text redaction reduce exposure but cannot establish that arbitrary identifiers, screenshots, binary attachments, or HTML reports are safe to share.
+
 ## Current coverage and limitations
 
 This repository contains reusable framework components and disposable public fixtures, not an application-specific end-to-end suite. `tests/auth.setup.ts` remains a skipped placeholder for real applications; the local authentication fixture is separate and uses only synthetic accounts. Add application-specific tests and Page Objects under `tests/<project>/` and `pages/<project>/` after confirming project requirements and environment access.
@@ -279,7 +303,7 @@ Local Git exclusions are not included in fresh clones or GitHub Actions checkout
 
 For public framework changes, review the diff and sensitive-data scope, run the relevant static checks and targeted tests, then create a feature branch. Stage only approved files and commit after review. Create a Pull Request when approved, verify all relevant CI jobs, and merge only after approval. Confirm post-merge CI and synchronize local `main`. Keep private application-specific tests and evidence out of this public workflow.
 
-Completed: Phase 1 (CI Pipeline v1), Phase 2A (API automation), Phase 2B (local API/UI integration), and Phase 3 (data-driven integration testing). Phase 4 (local authentication and RBAC) is implemented and locally validated; its Pull Request, CI, and merge verification are pending. Phases 5–7 remain planned.
+Completed: Phase 1 (CI Pipeline v1), Phase 2A (API automation), Phase 2B (local API/UI integration), Phase 3 (data-driven integration testing), and Phase 4 (local authentication and RBAC). Phase 5 execution summaries are implemented and locally validated; CI and publication review remain pending. Phases 6–7 remain planned.
 
 ## Security and publishing
 
